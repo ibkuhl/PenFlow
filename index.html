@@ -14,7 +14,7 @@
   .top-row input, .top-row textarea { flex: 1; min-width: 140px; }
   input[type="text"], input[type="password"], textarea { width: 100%; padding: 5px 8px; border: 1px solid #8884; border-radius: 6px; font-size: 0.78rem; }
   textarea { min-height: 110px; resize: vertical; }
-  .ports { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 4px 6px; max-height: 320px; overflow: auto; padding: 6px; border: 1px solid #8884; border-radius: 8px; }
+  .ports { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px 6px; max-height: 320px; overflow: auto; padding: 6px; border: 1px solid #8884; border-radius: 8px; }
   label.chk { display: flex; align-items: center; gap: 4px; font-size: 0.72rem; }
   .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
   button { border: 0; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; background: #4f46e5; color: #fff; font-size: 0.72rem; }
@@ -22,16 +22,26 @@
   button.ghost { background: #eee; color: #111; }
   pre { background: #111; color: #f5f5f5; padding: 6px; border-radius: 6px; overflow: auto; font-size: 0.72rem; max-height: 460px; }
   .hint { font-size: 0.68rem; opacity: 0.75; }
-
   .links { display: grid; grid-template-columns: 1fr; gap: 6px; max-height: 220px; overflow: auto; padding: 6px; border: 1px solid #8884; border-radius: 8px; }
   .links a { text-decoration: none; padding: 6px; border: 1px dashed #8884; border-radius: 6px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .links a:hover { background: #8881; }
   .controls-inline { display: flex; gap: 10px; align-items: center; }
   .controls-inline label { display: inline-flex; align-items: center; gap: 6px; font-size: 0.74rem; }
+
+  .kb-asterisk { display: inline-block; font-weight: 700; opacity: .55; margin-left: 4px; cursor: pointer; user-select: none; line-height: 1; }
+  .kb-asterisk:hover { opacity: 1; text-shadow: 0 0 0.25px currentColor; }
+  .kb-asterisk:focus { outline: none; box-shadow: 0 0 0 2px #60a5fa66; border-radius: 3px; }
+
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 9999; }
+  .panel { width: min(820px, 92vw); max-height: 82vh; background: #0b0b0b; color: #eaeaea; border-radius: 12px; padding: 0; box-shadow: none; display: flex; flex-direction: column; }
+  .panel header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; font-size: 0.8rem; }
+  .panel header .title { opacity: .9; }
+  .panel header .close { background: transparent; color: #eaeaea; border: 0; font-size: 1rem; padding: 4px 8px; cursor: pointer; }
+  .panel pre { margin: 0; border-radius: 0 0 12px 12px; padding: 10px 12px; background: #0b0b0b; color: #dcdcdc; }
 </style>
 </head>
 <body>
-    <h1>Kuhl's Pentest Command Builder</h1>
+  <h1>Kuhl's Pentest Command Builder</h1>
 
   <fieldset>
     <legend>Target Info</legend>
@@ -78,12 +88,23 @@
 
   <pre id="out"># Commands will appear here…</pre>
 
+  <div id="kbOverlay" class="overlay" aria-hidden="true">
+    <div class="panel" role="dialog" aria-modal="true" aria-labelledby="kbTitle">
+      <header>
+        <div id="kbTitle" class="title">Kerbrute install (Kali)</div>
+        <button class="close" id="kbClose" title="Close">✕</button>
+      </header>
+      <pre id="kbPre"></pre>
+    </div>
+  </div>
+
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const PORTS = [
     [21,'FTP'], [22,'SSH'], [23,'Telnet'],
-    [25,'SMTP'], [53,'DNS'],
-    [80,'HTTP'], [110,'POP3'], [111,'RPCbind'],
+    [25,'SMTP'], [53,'DNS'], [80,'HTTP'],
+    [88,'Kerberos'],
+    [110,'POP3'], [111,'RPCbind'],
     [135,'MSRPC'], [139,'SMB'], [143,'IMAP'],
     [161,'SNMP'], [389,'LDAP'], [443,'HTTPS'], [445,'SMB'],
     [465,'SMTPS'], [587,'SMTP-Sub'], [636,'LDAPS'],
@@ -108,7 +129,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const linksEl  = document.getElementById('portLinks');
   const includeFilteredEl = document.getElementById('includeFiltered');
 
-  // Build initial checkbox grid
   PORTS.forEach(([p,label])=> ensurePortCheckbox(p, label));
 
   function ensurePortCheckbox(port, label='(parsed)'){
@@ -117,11 +137,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const wrap = document.createElement('label');
     wrap.className = 'chk';
     wrap.setAttribute('for', id);
-    wrap.innerHTML = `<input id="${id}" type="checkbox" value="${port}"><span>${port} <span class="hint">${label}</span></span>`;
+
+    let inner = `<input id="${id}" type="checkbox" value="${port}"><span>${port} <span class="hint">${label}</span></span>`;
+    if(port === 88){
+      inner += ` <span class="kb-asterisk" title="Kerbrute install (Kali)" role="button" tabindex="0" data-kb-asterisk>*</span>`;
+    }
+    wrap.innerHTML = inner;
     portsEl.appendChild(wrap);
+
+    if(port === 88){
+      const star = wrap.querySelector('[data-kb-asterisk]');
+      const open = () => openKerbruteWindow();
+      star.addEventListener('click', open);
+      star.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' ') { e.preventDefault(); open(); } });
+    }
   }
 
-  // Helpers
   function shellEscape(s){
     if(s===undefined || s===null) return '';
     if(s === '') return "''";
@@ -135,9 +166,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function clearPorts(){ portsEl.querySelectorAll('input[type=checkbox]').forEach(cb=> cb.checked = false); }
   function clearLinks(){ linksEl.innerHTML = ''; }
 
-  // Quick-selects
   document.getElementById('selectCommon').addEventListener('click', ()=>{
-    const commons = new Set([21,22,23,25,53,80,139,143,389,443,445,1433,3306,3389,5432,5985,5986,6379,8080,8443]);
+    const commons = new Set([21,22,23,25,53,80,88,139,143,389,443,445,1433,3306,3389,5432,5985,5986,6379,8080,8443]);
     portsEl.querySelectorAll('input[type=checkbox]').forEach(cb=> cb.checked = commons.has(parseInt(cb.value,10)));
   });
   document.getElementById('selectAll').addEventListener('click', ()=>{
@@ -147,17 +177,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('clearPorts').addEventListener('click', clearPorts);
   document.getElementById('clearLinks').addEventListener('click', clearLinks);
 
-  // Parse Nmap results
   document.getElementById('parseNmap').addEventListener('click', ()=>{
     const txt = nmapEl.value || '';
     if(!txt.trim()) return;
 
-    // Try to set IP/host from "Nmap scan report for"
     const ipMatch = txt.match(/Nmap scan report for .*?\((\d{1,3}(?:\.\d{1,3}){3})\)/) ||
                     txt.match(/Nmap scan report for\s+(\d{1,3}(?:\.\d{1,3}){3})/);
     if(ipMatch) ipEl.value = ipMatch[1] || ipMatch[0].split('for').pop().trim();
 
-    // Collect lines & ports
     const includeFiltered = includeFilteredEl.checked;
     const openLineRe = /^\s*(\d{1,5})\/(tcp|udp)\s+open(?:\S*)\s+.*$/gmi;
     const filteredLineRe = /^\s*(\d{1,5})\/(tcp|udp)\s+filtered\s+.*$/gmi;
@@ -165,7 +192,6 @@ document.addEventListener('DOMContentLoaded', () => {
     clearLinks();
     const toSelect = new Set();
 
-    // Open ports -> select + link
     let m;
     while((m = openLineRe.exec(txt)) !== null){
       const fullLine = m[0].trim();
@@ -173,8 +199,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if(!isNaN(portNum)){
         ensurePortCheckbox(portNum);
         toSelect.add(portNum);
-
-        // Build a Google link for the entire line
         const a = document.createElement('a');
         a.href = 'https://www.google.com/search?q=' + encodeURIComponent(fullLine);
         a.target = '_blank';
@@ -184,7 +208,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Optionally include filtered ports in selection (no links)
     if(includeFiltered){
       let f;
       while((f = filteredLineRe.exec(txt)) !== null){
@@ -196,14 +219,12 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Apply selection
     portsEl.querySelectorAll('input[type=checkbox]').forEach(cb=>{
       const val = parseInt(cb.value,10);
       cb.checked = toSelect.has(val);
     });
   });
 
-  // Build commands
   document.getElementById('build').addEventListener('click', ()=>{
     const host   = ipEl.value.trim();
     const user   = userEl.value.trim();
@@ -234,19 +255,41 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
+    // ---------- Kerberos (88) / Kerbrute ----------
+    if(ports.includes(88)){
+      cmds.push('# Kerberos (88) — Kerbrute');
+      if(!domain){
+        cmds.push('# NOTE: Provide Domain/Realm to enable Kerbrute (-d).');
+      }
+      if(domain){
+        cmds.push(`kerbrute userenum -d ${shellEscape(domain)} --dc ${host} users.txt`);
+        if(pass){
+          cmds.push(`kerbrute passwordspray -d ${shellEscape(domain)} --dc ${host} users.txt ${shellEscape(pass)}`);
+        } else {
+          cmds.push(`# passwordspray (set a password in the Password field or edit here)`);
+          cmds.push(`kerbrute passwordspray -d ${shellEscape(domain)} --dc ${host} users.txt 'Password123!'`);
+        }
+        if(user){
+          cmds.push(`kerbrute bruteuser -d ${shellEscape(domain)} --dc ${host} ${shellEscape(user)} passwords.txt`);
+        }
+        cmds.push(`# bruteforce with combo list (username:password per line)`);
+        cmds.push(`kerbrute bruteforce -d ${shellEscape(domain)} --dc ${host} combos.txt`);
+        cmds.push(`# (optional) throttle to avoid lockouts`);
+        cmds.push(`kerbrute passwordspray -d ${shellEscape(domain)} --dc ${host} -t 2 -delay 1500 users.txt 'Season2025!'`);
+      }
+    }
+
     // ---------- SSH (22) ----------
     if(ports.includes(22)){
       cmds.push('# SSH');
       if(user){
         cmds.push(`ssh ${shellEscape(user)}@${host}`);
         if(pass){
-          // direct non-interactive login helper (requires sshpass)
           cmds.push(`sshpass -p ${shellEscape(pass)} ssh ${shellEscape(user)}@${host}`);
         }
       } else {
         cmds.push(`ssh ${host}`);
       }
-      // Brute-force template
       const u = user ? `-l ${shellEscape(user)}` : '-L users.txt';
       const p = pass ? `-p ${shellEscape(pass)}` : '-P passwords.txt';
       cmds.push(`hydra -t 4 ${u} ${p} ssh://${host}`);
@@ -264,7 +307,6 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         cmds.push(`ftp ${host}`);
       }
-      // Brute-force template
       const u = user ? `-l ${shellEscape(user)}` : '-L users.txt';
       const p = pass ? `-p ${shellEscape(pass)}` : '-P passwords.txt';
       cmds.push(`hydra -t 4 ${u} ${p} ftp://${host}`);
@@ -274,12 +316,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if(ports.includes(23)){
       cmds.push('# Telnet');
       if(user){
-        // many telnet clients support -l for username; password will be prompted
         cmds.push(`telnet -l ${shellEscape(user)} ${host} 23`);
       } else {
         cmds.push(`telnet ${host} 23`);
       }
-      // Brute-force template
       const u = user ? `-l ${shellEscape(user)}` : '-L users.txt';
       const p = pass ? `-p ${shellEscape(pass)}` : '-P passwords.txt';
       cmds.push(`hydra -t 4 ${u} ${p} -s 23 telnet://${host}`);
@@ -300,11 +340,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- SMB (139/445) ----------
     if(ports.some(p=>p===139||p===445)){
       cmds.push('# SMB');
-      const u = user ? `-u ${shellEscape(user)}` : '';
-      const pw = pass ? `-p ${shellEscape(pass)}` : '';
-      const d = domain ? `-d ${shellEscape(domain)}` : '';
-      cmds.push(`enum4linux-ng -A ${host}`);
-      cmds.push(`smbmap -H ${host} ${u} ${pw} ${d}`.replace(/\s+/g,' ').trim());
+      const uOpt = user ? `-u ${shellEscape(user)}` : '';
+      const pOpt = pass ? `-p ${shellEscape(pass)}` : '';
+      const dOpt = domain ? `-d ${shellEscape(domain)}` : '';
+
+      // enum4linux-ng with creds when provided (opts before host)
+      cmds.push(`enum4linux-ng -A ${uOpt} ${pOpt} ${dOpt} ${host}`.replace(/\s+/g,' ').trim());
+
+      cmds.push(`smbmap -H ${host} ${uOpt} ${pOpt} ${dOpt}`.replace(/\s+/g,' ').trim());
       cmds.push(`smbclient -L \\\\${host} -N`);
       if(user && pass){
         cmds.push(`crackmapexec smb ${host} -u ${shellEscape(user)} -p ${shellEscape(pass)} ${domain ? '-d ' + shellEscape(domain) : ''}`.replace(/\s+/g,' ').trim());
@@ -318,7 +361,7 @@ document.addEventListener('DOMContentLoaded', () => {
       cmds.push('# WinRM');
       const u = user ? `-u ${shellEscape(user)}` : '';
       const p = pass ? `-p ${shellEscape(pass)}` : '';
-      const r = domain ? `-r ${shellEscape(domain)}` : ''; // realm
+      const r = domain ? `-r ${shellEscape(domain)}` : '';
       cmds.push(`evil-winrm ${u} ${p} ${r} -i ${host}`.replace(/\s+/g,' ').trim());
       if(user && pass){
         cmds.push(`# Mimikatz via WinRM (requires Invoke-Mimikatz.ps1 locally)`);
@@ -368,7 +411,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- UPnP Belkin/Linksys (5431/tcp) ----------
     if(ports.includes(5431)){
       cmds.push('# UPnP (5431/tcp)');
-      // Keep upnp-info without -p to avoid PowerShell ambiguity issues
       cmds.push(`nmap --script upnp-info ${host}`);
       cmds.push(`curl -s http://${host}:5431/setup.xml`);
       cmds.push(`curl -s http://${host}:5431/rootDesc.xml`);
@@ -490,6 +532,52 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('copy').addEventListener('click', async ()=>{
     try { await navigator.clipboard.writeText(outEl.textContent); } catch {}
+  });
+
+  const kbOverlay = document.getElementById('kbOverlay');
+  const kbPre = document.getElementById('kbPre');
+  const kbClose = document.getElementById('kbClose');
+
+  function openKerbruteWindow(){
+    const lines = [
+      '# Kerbrute install (Kali)',
+      'sudo apt update && sudo apt install -y golang git curl',
+      '',
+      '# Option A: Build from source',
+      'git clone https://github.com/ropnop/kerbrute.git',
+      'cd kerbrute && go build -o kerbrute . && sudo mv kerbrute /usr/local/bin/ && cd .. && rm -rf kerbrute',
+      'kerbrute -h',
+      '',
+      '# Option B: Precompiled binary (amd64)',
+      'curl -L -o kerbrute_linux_amd64 https://github.com/ropnop/kerbrute/releases/latest/download/kerbrute_linux_amd64',
+      'chmod +x kerbrute_linux_amd64 && sudo mv kerbrute_linux_amd64 /usr/local/bin/kerbrute',
+      'kerbrute -h'
+    ];
+    kbPre.textContent = lines.join('\n');
+    kbOverlay.style.display = 'flex';
+    kbOverlay.setAttribute('aria-hidden','false');
+  }
+
+  document.addEventListener('click', (e)=>{
+    const el = e.target;
+    if(el && el.matches('.kb-asterisk')) openKerbruteWindow();
+  });
+
+  kbClose.addEventListener('click', ()=>{
+    kbOverlay.style.display = 'none';
+    kbOverlay.setAttribute('aria-hidden','true');
+  });
+  kbOverlay.addEventListener('click', (e)=>{
+    if(e.target === kbOverlay){
+      kbOverlay.style.display = 'none';
+      kbOverlay.setAttribute('aria-hidden','true');
+    }
+  });
+  document.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape' && kbOverlay.style.display === 'flex'){
+      kbOverlay.style.display = 'none';
+      kbOverlay.setAttribute('aria-hidden','true');
+    }
   });
 });
 </script>

